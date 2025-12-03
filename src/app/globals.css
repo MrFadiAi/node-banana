@@ -1,0 +1,152 @@
+@import "tailwindcss";
+
+@theme {
+  --color-canvas-bg: #171717;
+}
+
+:root {
+  --background: #0a0a0a;
+  --foreground: #fafafa;
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* React Flow customizations */
+.react-flow__node {
+  font-family: inherit;
+}
+
+/* Base handle styles */
+.react-flow__handle {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid white;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+
+.react-flow__handle-left {
+  left: -5px;
+}
+
+.react-flow__handle-right {
+  right: -5px;
+}
+
+/* Image handles - soft green */
+.react-flow__handle[data-handletype="image"] {
+  background: #10b981;
+}
+
+/* Prompt/text handles - soft blue */
+.react-flow__handle[data-handletype="prompt"] {
+  background: #3b82f6;
+}
+
+.react-flow__edge-path {
+  stroke: #94a3b8;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.react-flow__edge.selected .react-flow__edge-path,
+.react-flow__edge:hover .react-flow__edge-path {
+  stroke: #3b82f6;
+}
+
+/* Hide resize handles but show resize cursor on edges */
+.react-flow__resize-control {
+  opacity: 0 !important;
+  pointer-events: auto !important;
+}
+
+.react-flow__resize-control.left,
+.react-flow__resize-control.right {
+  cursor: ew-resize !important;
+  width: 8px !important;
+}
+
+.react-flow__resize-control.top,
+.react-flow__resize-control.bottom {
+  cursor: ns-resize !important;
+  height: 8px !important;
+}
+
+.react-flow__resize-control.top.left,
+.react-flow__resize-control.bottom.right {
+  cursor: nwse-resize !important;
+}
+
+.react-flow__resize-control.top.right,
+.react-flow__resize-control.bottom.left {
+  cursor: nesw-resize !important;
+}
+
+/* React Flow Controls dark theme */
+.react-flow__controls {
+  background: #262626 !important;
+  border: 1px solid #404040 !important;
+  border-radius: 8px !important;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3) !important;
+}
+
+.react-flow__controls-button {
+  background: #262626 !important;
+  border-bottom: 1px solid #404040 !important;
+}
+
+.react-flow__controls-button svg {
+  fill: #d4d4d4 !important;
+}
+
+.react-flow__controls-button svg path {
+  fill: #d4d4d4 !important;
+}
+
+.react-flow__controls-button:hover {
+  background: #404040 !important;
+}
+
+.react-flow__controls-button:hover svg,
+.react-flow__controls-button:hover svg path {
+  fill: #fafafa !important;
+}
+
+.react-flow__controls-button:last-child {
+  border-bottom: none !important;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #262626;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #525252;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #737373;
+}
+
+/* Edge pulse animation for loading connectors */
+@keyframes flowPulse {
+  0% {
+    stroke-dashoffset: 50;
+  }
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
