@@ -24,6 +24,8 @@ import {
   NanoBananaNode,
   LLMGenerateNode,
   OutputNode,
+  SplitNode,
+  Make32Node,
 } from "./nodes";
 import { EditableEdge } from "./edges";
 import { ConnectionDropMenu, MenuAction } from "./ConnectionDropMenu";
@@ -40,6 +42,8 @@ const nodeTypes: NodeTypes = {
   nanoBanana: NanoBananaNode,
   llmGenerate: LLMGenerateNode,
   output: OutputNode,
+  splitNode: SplitNode,
+  make32Node: Make32Node,
 };
 
 const edgeTypes: EdgeTypes = {
@@ -70,7 +74,7 @@ const isValidConnection = (connection: Edge | Connection): boolean => {
 const getNodeHandles = (nodeType: string): { inputs: string[]; outputs: string[] } => {
   switch (nodeType) {
     case "imageInput":
-      return { inputs: [], outputs: ["image"] };
+      return { inputs: ["image"], outputs: ["image"] };
     case "annotation":
       return { inputs: ["image"], outputs: ["image"] };
     case "prompt":
@@ -81,6 +85,10 @@ const getNodeHandles = (nodeType: string): { inputs: string[]; outputs: string[]
       return { inputs: ["text", "image"], outputs: ["text"] };
     case "output":
       return { inputs: ["image"], outputs: [] };
+    case "splitNode":
+      return { inputs: ["image"], outputs: ["image"] };
+    case "make32Node":
+      return { inputs: ["image"], outputs: ["image"] };
     default:
       return { inputs: [], outputs: [] };
   }
@@ -199,17 +207,17 @@ function WorkflowCanvasInner() {
               // Create the connection
               const connection: Connection = isFromSource
                 ? {
-                    source: connectionState.fromNode.id,
-                    sourceHandle: fromHandleId,
-                    target: targetNodeId,
-                    targetHandle: compatibleHandle,
-                  }
+                  source: connectionState.fromNode.id,
+                  sourceHandle: fromHandleId,
+                  target: targetNodeId,
+                  targetHandle: compatibleHandle,
+                }
                 : {
-                    source: targetNodeId,
-                    sourceHandle: compatibleHandle,
-                    target: connectionState.fromNode.id,
-                    targetHandle: fromHandleId,
-                  };
+                  source: targetNodeId,
+                  sourceHandle: compatibleHandle,
+                  target: connectionState.fromNode.id,
+                  targetHandle: fromHandleId,
+                };
 
               if (isValidConnection(connection)) {
                 handleConnect(connection);
@@ -749,8 +757,8 @@ function WorkflowCanvasInner() {
               {dropType === "workflow"
                 ? "Drop to load workflow"
                 : dropType === "node"
-                ? "Drop to create node"
-                : "Drop image to create node"}
+                  ? "Drop to create node"
+                  : "Drop image to create node"}
             </p>
           </div>
         </div>

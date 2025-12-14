@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useRef } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Handle, Position, NodeProps, Node } from "@xyflow/react";
 import { BaseNode } from "./BaseNode";
 import { useWorkflowStore } from "@/store/workflowStore";
 import { ImageInputNodeData } from "@/types";
+import { expandImage3x2 } from "@/utils/aiUtils";
 
 type ImageInputNodeType = Node<ImageInputNodeData, "imageInput">;
 
@@ -12,6 +13,33 @@ export function ImageInputNode({ id, data, selected }: NodeProps<ImageInputNodeT
   const nodeData = data;
   const updateNodeData = useWorkflowStore((state) => state.updateNodeData);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [isGenerating, setIsGenerating] = useState(false);
+
+  const handleExpandImage = useCallback(async () => {
+    if (!nodeData.image || isGenerating) return;
+
+    setIsGenerating(true);
+    try {
+      const newImage = await expandImage3x2(nodeData.image);
+
+      // Load image to get dimensions
+      const img = new Image();
+      img.onload = () => {
+        updateNodeData(id, {
+          image: newImage,
+          dimensions: { width: img.width, height: img.height },
+        });
+        setIsGenerating(false);
+      };
+      img.src = newImage;
+
+    } catch (error) {
+      console.error("Expansion error:", error);
+      alert("Failed to expand image: " + (error instanceof Error ? error.message : "Unknown error"));
+      setIsGenerating(false);
+    }
+  }, [nodeData.image, isGenerating, id, updateNodeData]);
 
   const handleFileChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -94,14 +122,39 @@ export function ImageInputNode({ id, data, selected }: NodeProps<ImageInputNodeT
             alt={nodeData.filename || "Uploaded image"}
             className="w-full flex-1 min-h-0 object-contain rounded"
           />
-          <button
-            onClick={handleRemove}
-            className="absolute top-1 right-1 w-5 h-5 bg-black/60 text-white rounded text-xs opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
-          >
-            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+
+          {/* Action Buttons */}
+          <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            {/* Expand Button */}
+            <button
+              onClick={handleExpandImage}
+              disabled={isGenerating}
+              className="px-2 h-5 bg-blue-600/90 hover:bg-blue-500 text-white rounded text-[10px] font-medium flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed shadow-sm backdrop-blur-sm"
+              title="Expand to 3:2"
+            >
+              {isGenerating ? (
+                <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+              ) : (
+                "Make 3:2"
+              )}
+            </button>
+
+            {/* Remove Button */}
+            <button
+              onClick={handleRemove}
+              disabled={isGenerating}
+              className="w-5 h-5 bg-black/60 hover:bg-black/80 text-white rounded flex items-center justify-center shadow-sm backdrop-blur-sm"
+              title="Remove image"
+            >
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+
           <div className="mt-1.5 flex items-center justify-between shrink-0">
             <span className="text-[10px] text-neutral-400 truncate max-w-[120px]">
               {nodeData.filename}
@@ -112,6 +165,12 @@ export function ImageInputNode({ id, data, selected }: NodeProps<ImageInputNodeT
               </span>
             )}
           </div>
+
+          {/* Global Loading Overlay (if generating) */}
+          {isGenerating && (
+            <div className="absolute inset-0 bg-neutral-900/50 flex items-center justify-center rounded backdrop-blur-[1px]">
+            </div>
+          )}
         </div>
       ) : (
         <div
@@ -129,6 +188,12 @@ export function ImageInputNode({ id, data, selected }: NodeProps<ImageInputNodeT
         </div>
       )}
 
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="image"
+        data-handletype="image"
+      />
       <Handle
         type="source"
         position={Position.Right}

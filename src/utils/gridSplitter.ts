@@ -186,20 +186,25 @@ export function getGridCandidates(width: number, height: number): GridCandidate[
         : gridAspectRatio / imageAspectRatio;
       const layoutScore = Math.exp(-(layoutRatio - 1) * 2);
 
-      // Score 3: Prefer grids with more cells (contact sheets usually have many)
-      // But not too strongly - avoid over-splitting
+      // Score 3: Prefer SIMPLER grids (fewer cells) - this prevents over-splitting
+      // Images with internal details (like text labels) shouldn't cause extra splits
+      // Sweet spot is 4-9 cells, penalize both extremes
       const cellCount = rows * cols;
-      const cellCountScore = Math.min(cellCount / 6, 1); // Normalize, cap at 6
+      // Peak at 4-6 cells, decay for higher counts to prevent over-splitting
+      const cellCountScore = cellCount <= 6
+        ? 1.0  // 2-6 cells are all equally good
+        : Math.exp(-(cellCount - 6) * 0.15); // Penalize higher cell counts
 
       // Score 4: Prefer square-ish grids (NxN or close)
       const gridSymmetry = 1 - Math.abs(rows - cols) / Math.max(rows, cols);
 
       // Combined score (higher is better)
+      // Strong preference for good cell aspect ratios, weak preference for cell count
       const score =
-        cellARScore * 0.45 +      // Cell aspect ratio is most important
+        cellARScore * 0.55 +      // Cell aspect ratio is most important
         layoutScore * 0.25 +      // Grid should match image shape
-        cellCountScore * 0.15 +   // Prefer more cells
-        gridSymmetry * 0.15;      // Prefer symmetric grids
+        cellCountScore * 0.10 +   // Slight preference for simpler grids
+        gridSymmetry * 0.10;      // Prefer symmetric grids
 
       candidates.push({
         rows,
@@ -246,7 +251,8 @@ function analyzeGridFromImageData(imageData: ImageData): GridDetectionResult {
 
     // Edge score is normalized 0-1, combine with geometric score
     // Give less weight to edges since they may not exist in gapless grids
-    const combinedScore = candidate.score * 0.7 + edgeScore * 0.3;
+    // and internal details (like text labels) can create misleading edges
+    const combinedScore = candidate.score * 0.8 + edgeScore * 0.2;
 
     if (combinedScore > bestCombinedScore) {
       bestCombinedScore = combinedScore;
@@ -454,13 +460,148 @@ export async function splitImage(
 }
 
 /**
- * Convenience function that detects and splits in one call
+ * Detect grid using Gap/Gutter Detection (Projection Profile)
+ * Sums pixel brightness across rows/cols to find continuous black gaps.
+ * Much more robust for images with dark content than simple thresholding.
+ */
+export async function detectGridWithGutters(imageDataUrl: string): Promise<GridDetectionResult | null> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
+
+      if (!ctx) {
+        resolve(null);
+        return;
+      }
+
+      canvas.width = img.width;
+      canvas.height = img.height;
+      ctx.drawImage(img, 0, 0);
+
+      const { width, height } = canvas;
+      const imageData = ctx.getImageData(0, 0, width, height);
+      const data = imageData.data;
+
+      // 1. Calculate Projection Profiles (Sum of brightness)
+      const colSums = new Float32Array(width).fill(0);
+      const rowSums = new Float32Array(height).fill(0);
+
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const i = (y * width + x) * 4;
+          const brightness = (data[i] + data[i + 1] + data[i + 2]) / 3;
+          colSums[x] += brightness;
+          rowSums[y] += brightness;
+        }
+      }
+
+      // 2. Find Gaps (Valleys in the profile)
+      // A "gap" is a continuous run of low-brightness columns/rows
+      // We normalize by row/col length to look for average darkness
+      const isColumnGap = (x: number) => (colSums[x] / height) < 30; // Avg brightness < 30 (very dark)
+      const isRowGap = (y: number) => (rowSums[y] / width) < 30;
+
+      // Helper to find intervals of CONTENT (non-gaps)
+      function findIntervals(length: number, isGapFn: (i: number) => boolean) {
+        const intervals: { start: number, end: number, size: number }[] = [];
+        let inContent = false;
+        let start = 0;
+
+        for (let i = 0; i < length; i++) {
+          if (!isGapFn(i)) {
+            if (!inContent) {
+              inContent = true;
+              start = i;
+            }
+          } else {
+            if (inContent) {
+              inContent = false;
+              intervals.push({ start, end: i - 1, size: i - start });
+            }
+          }
+        }
+        if (inContent) {
+          intervals.push({ start, end: length - 1, size: length - start });
+        }
+
+        // Filter out tiny intervals (noise/lines) - must be > 5% of dimension
+        return intervals.filter(iv => iv.size > length * 0.05);
+      }
+
+      const colIntervals = findIntervals(width, isColumnGap); // X ranges
+      const rowIntervals = findIntervals(height, isRowGap);   // Y ranges
+
+      console.log(`[GridSplitter] Gutter detection: ${rowIntervals.length} rows, ${colIntervals.length} cols`);
+
+      if (rowIntervals.length === 0 || colIntervals.length === 0) {
+        resolve(null);
+        return;
+      }
+
+      // 3. Construct Grid Cells from Intersections
+      const cells: GridCell[] = [];
+
+      for (const rowIv of rowIntervals) {
+        for (const colIv of colIntervals) {
+          cells.push({
+            x: colIv.start,
+            y: rowIv.start,
+            width: colIv.size,
+            height: rowIv.size
+          });
+        }
+      }
+
+      // 4. Exclude Text Labels (Heuristic)
+      // If we have "pairs" of rows where one is small and below a large one, it's likely a label
+      // Actually, standard grid usually has equal sized main cells. 
+      // Let's filter cells that are significantly smaller than the median cell size
+      const areas = cells.map(c => c.width * c.height);
+      areas.sort((a, b) => a - b);
+      const medianArea = areas[Math.floor(areas.length / 2)];
+
+      const validCells = cells.filter(c => {
+        const area = c.width * c.height;
+        return area > medianArea * 0.5; // Only keep checks > 50% of median size
+      });
+
+      console.log(`[GridSplitter] Final valid cells: ${validCells.length}`);
+
+      resolve({
+        rows: rowIntervals.length,  // Approximate, might include text rows initially
+        cols: colIntervals.length,
+        cells: validCells,
+        confidence: 0.95
+      });
+    };
+
+    img.onerror = () => resolve(null);
+    img.src = imageDataUrl;
+  });
+}
+
+/**
+ * Convenience function that detects and splits in one call.
+ * Uses Deterministic Contours detection (Computer Vision).
  */
 export async function detectAndSplitGrid(imageDataUrl: string): Promise<{
   grid: GridDetectionResult;
   images: string[];
 }> {
-  const grid = await detectGrid(imageDataUrl);
+  // Use robust Gutter detection (no AI)
+  console.log("[GridSplitter] Attempting Gutter/Gap detection...");
+  let grid = await detectGridWithGutters(imageDataUrl);
+
+  // Fall back to heuristic detection if computer vision fails completely
+  if (!grid || grid.cells.length < 2) {
+    console.log("[GridSplitter] Gutter detection failed, falling back to heuristic...");
+    grid = await detectGrid(imageDataUrl);
+  }
+
   const images = await splitImage(imageDataUrl, grid);
   return { grid, images };
 }
@@ -480,3 +621,4 @@ export async function splitWithDimensions(
   const images = await splitImage(imageDataUrl, grid);
   return { grid, images };
 }
+

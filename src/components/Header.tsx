@@ -8,12 +8,12 @@ export function Header() {
         <h1 className="text-2xl font-semibold text-neutral-100 tracking-tight">Node Banana</h1>
       </div>
       <a
-        href="https://x.com/ReflctWillie"
+        href="https://x.com/Mr_CryptoYT"
         target="_blank"
         rel="noopener noreferrer"
         className="text-sm text-neutral-500 hover:text-neutral-300 transition-colors"
       >
-        Made by Willie
+        Made by Fdy
       </a>
     </header>
   );

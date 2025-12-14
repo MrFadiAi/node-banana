@@ -7,7 +7,41 @@ export type NodeType =
   | "prompt"
   | "nanoBanana"
   | "llmGenerate"
-  | "output";
+  | "output"
+  | "splitNode"
+  | "make32Node";
+
+// ... existing types ...
+
+// Make 3:2 Node Data
+export interface Make32NodeData extends BaseNodeData {
+  inputImage: string | null;
+  outputImage: string | null;
+  status: NodeStatus;
+  error: string | null;
+}
+
+// ... existing types ...
+
+
+export interface SplitNodeData extends BaseNodeData {
+  inputImage: string | null;
+  status: NodeStatus;
+  error: string | null;
+}
+
+// ... existing types ...
+
+// Union of all node data types
+export type WorkflowNodeData =
+  | ImageInputNodeData
+  | AnnotationNodeData
+  | PromptNodeData
+  | NanoBananaNodeData
+  | LLMGenerateNodeData
+  | OutputNodeData
+  | SplitNodeData
+  | Make32NodeData;
 
 // Aspect Ratios (supported by both Nano Banana and Nano Banana Pro)
 export type AspectRatio = "1:1" | "2:3" | "3:2" | "3:4" | "4:3" | "4:5" | "5:4" | "9:16" | "16:9" | "21:9";
@@ -146,14 +180,7 @@ export interface OutputNodeData extends BaseNodeData {
   image: string | null;
 }
 
-// Union of all node data types
-export type WorkflowNodeData =
-  | ImageInputNodeData
-  | AnnotationNodeData
-  | PromptNodeData
-  | NanoBananaNodeData
-  | LLMGenerateNodeData
-  | OutputNodeData;
+
 
 // Workflow Node with typed data
 export type WorkflowNode = Node<WorkflowNodeData, NodeType>;

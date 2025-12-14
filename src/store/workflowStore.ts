@@ -20,8 +20,12 @@ import {
   OutputNodeData,
   WorkflowNodeData,
   ImageHistoryItem,
+  SplitNodeData,
+  Make32NodeData,
 } from "@/types";
 import { useToast } from "@/components/Toast";
+import { detectAndSplitGrid } from "@/utils/gridSplitter";
+import { expandImage3x2 } from "@/utils/aiUtils";
 
 export type EdgeStyle = "angular" | "curved";
 
@@ -134,6 +138,19 @@ const createDefaultNodeData = (type: NodeType): WorkflowNodeData => {
       return {
         image: null,
       } as OutputNodeData;
+    case "splitNode":
+      return {
+        inputImage: null,
+        status: "idle",
+        error: null,
+      } as SplitNodeData;
+    case "make32Node":
+      return {
+        inputImage: null,
+        outputImage: null,
+        status: "idle",
+        error: null,
+      } as Make32NodeData;
   }
 };
 
@@ -164,6 +181,8 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
       nanoBanana: { width: 300, height: 300 },
       llmGenerate: { width: 320, height: 360 },
       output: { width: 320, height: 320 },
+      splitNode: { width: 200, height: 160 },
+      make32Node: { width: 300, height: 260 },
     };
 
     const { width, height } = defaultDimensions[type];
@@ -678,6 +697,255 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
             const image = images[0] || null;
             if (image) {
               updateNodeData(node.id, { image });
+            }
+            break;
+          }
+
+          case "splitNode": {
+            const { images } = getConnectedInputs(node.id);
+            const inputImage = images[0] || null;
+
+            if (!inputImage) {
+              updateNodeData(node.id, {
+                status: "error",
+                error: "Missing input image",
+              });
+              break;
+            }
+
+            updateNodeData(node.id, {
+              status: "loading",
+              error: null,
+              inputImage: inputImage
+            });
+
+            try {
+              // Perform grid splitting
+              const { grid, images: splitImages } = await detectAndSplitGrid(inputImage);
+
+              if (splitImages.length === 0) {
+                updateNodeData(node.id, {
+                  status: "error",
+                  error: "No grid detected",
+                });
+                break;
+              }
+
+              // Create new nodes
+              const nodeWidth = 300;
+              const nodeHeight = 280;
+              const gap = 20;
+
+              // We need to calculate positions relative to the SplitNode
+              // But we don't have the SplitNode's current position easily accessible here in the logic loop
+              // except via `node` object which should have it if it was loaded from store
+              const startX = node.position.x + 300; // Offset to the right
+              const startY = node.position.y;
+
+              // Add images to global history and create nodes
+              // Find potential existing output nodes to reuse
+              const { edges, nodes } = get();
+              const connectedEdges = edges.filter(e => e.source === node.id && e.sourceHandle === "image");
+              const connectedNodeIds = new Set(connectedEdges.map(e => e.target));
+              const connectedNodes = nodes.filter(n => connectedNodeIds.has(n.id))
+                .sort((a, b) => {
+                  // Sort by Y then X to match grid order (approximate)
+                  const yDiff = a.position.y - b.position.y;
+                  if (Math.abs(yDiff) > 50) return yDiff; // Different rows
+                  return a.position.x - b.position.x; // Same row
+                });
+
+              // Add split images to global history and create/update nodes
+              splitImages.forEach((imageData: string, index: number) => {
+                const row = Math.floor(index / grid.cols);
+                const col = index % grid.cols;
+
+                // Save to history
+                const { addToGlobalHistory } = get();
+                addToGlobalHistory({
+                  image: imageData,
+                  timestamp: Date.now() + index,
+                  prompt: `Split ${row + 1}-${col + 1} from grid`,
+                  aspectRatio: "1:1", // approximate
+                  model: "nano-banana",
+                });
+
+                // Reuse existing node if available, otherwise create new
+                if (index < connectedNodes.length) {
+                  const existingNode = connectedNodes[index];
+                  const img = new Image();
+                  img.onload = () => {
+                    get().updateNodeData(existingNode.id, {
+                      image: imageData,
+                      filename: `split-${row + 1}-${col + 1}.png`,
+                      dimensions: { width: img.width, height: img.height },
+                    });
+                  };
+                  img.src = imageData;
+                } else {
+                  // Create Node
+                  const newNodeId = get().addNode("imageInput", {
+                    x: startX + col * (nodeWidth + gap),
+                    y: startY + row * (nodeHeight + gap),
+                  });
+
+                  // Create Edge from SplitNode to new Node
+                  const connection = {
+                    id: `edge-${node.id}-${newNodeId}`,
+                    source: node.id,
+                    target: newNodeId,
+                    sourceHandle: "image",
+                    targetHandle: "image",
+                  };
+                  set({ edges: addEdge(connection, get().edges as any) as WorkflowEdge[] });
+
+                  // Load image for dimensions and update
+                  const img = new Image();
+                  img.onload = () => {
+                    get().updateNodeData(newNodeId, {
+                      image: imageData,
+                      filename: `split-${row + 1}-${col + 1}.png`,
+                      dimensions: { width: img.width, height: img.height },
+                    });
+                  };
+                  img.src = imageData;
+                }
+              });
+
+              updateNodeData(node.id, {
+                status: "complete",
+                error: null,
+              });
+
+            } catch (error) {
+              updateNodeData(node.id, {
+                status: "error",
+                error: error instanceof Error ? error.message : "Split failed",
+              });
+            }
+            break;
+          }
+
+          case "make32Node": {
+            const { images } = getConnectedInputs(node.id);
+
+            if (!images || images.length === 0) {
+              updateNodeData(node.id, {
+                status: "error",
+                error: "Missing input images",
+              });
+              break;
+            }
+
+            updateNodeData(node.id, {
+              status: "loading",
+              error: null,
+              inputImage: images[0] // Just show first one as preview if needed
+            });
+
+            try {
+              const nodeWidth = 300;
+              const nodeHeight = 280;
+              const gap = 20;
+              const startX = node.position.x + 350; // To the right
+              const startY = node.position.y;
+
+              let successCount = 0;
+
+              // Find potential existing output nodes to reuse
+              const { edges, nodes } = get();
+              const connectedEdges = edges.filter(e => e.source === node.id && e.sourceHandle === "image");
+              const connectedNodeIds = new Set(connectedEdges.map(e => e.target));
+              const connectedNodes = nodes.filter(n => connectedNodeIds.has(n.id))
+                .sort((a, b) => a.position.y - b.position.y); // Sort by Y position
+
+              // Process ALL connected images
+              for (let i = 0; i < images.length; i++) {
+                const inputImage = images[i];
+                try {
+                  const outputImage = await expandImage3x2(inputImage);
+
+                  // Add to history
+                  const { addToGlobalHistory } = get();
+                  addToGlobalHistory({
+                    image: outputImage,
+                    timestamp: Date.now() + i,
+                    prompt: "Make 3:2 Expansion",
+                    aspectRatio: "3:2",
+                    model: "nano-banana-pro",
+                  });
+
+                  if (i < connectedNodes.length) {
+                    // Reuse existing node
+                    const existingNode = connectedNodes[i];
+                    const img = new Image();
+                    // Wait for load to set dimensions
+                    await new Promise<void>((resolve) => {
+                      img.onload = () => {
+                        get().updateNodeData(existingNode.id, {
+                          image: outputImage,
+                          filename: `expanded-${Date.now()}-${i}.png`,
+                          dimensions: { width: img.width, height: img.height },
+                        });
+                        resolve();
+                      }
+                      img.src = outputImage;
+                    });
+                  } else {
+                    // Create NEW Node for output
+                    const newNodeId = get().addNode("imageInput", {
+                      x: startX,
+                      y: startY + i * (nodeHeight + gap),
+                    });
+
+                    // Create Edge from Make32Node to new Node
+                    const connection = {
+                      id: `edge-${node.id}-${newNodeId}`,
+                      source: node.id,
+                      target: newNodeId,
+                      sourceHandle: "image",
+                      targetHandle: "image",
+                    };
+                    set({ edges: addEdge(connection, get().edges as any) as WorkflowEdge[] });
+
+                    // Update new node data
+                    const img = new Image();
+                    // Wait for load to set dimensions
+                    await new Promise<void>((resolve) => {
+                      img.onload = () => {
+                        get().updateNodeData(newNodeId, {
+                          image: outputImage,
+                          filename: `expanded-${Date.now()}-${i}.png`,
+                          dimensions: { width: img.width, height: img.height },
+                        });
+                        resolve();
+                      }
+                      img.src = outputImage;
+                    });
+                  }
+
+                  successCount++;
+
+                } catch (err) {
+                  console.error(`Failed to expand image ${i}`, err);
+                }
+              }
+
+              if (successCount > 0) {
+                updateNodeData(node.id, {
+                  status: "complete",
+                  error: null,
+                  outputImage: null // We don't need to show output inside anymore
+                });
+              } else {
+                throw new Error("All expansions failed");
+              }
+
+            } catch (error) {
+              updateNodeData(node.id, {
+                status: "error",
+                error: error instanceof Error ? error.message : "Expansion failed",
+              });
             }
             break;
           }
